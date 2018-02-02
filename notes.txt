@@ -1,0 +1,7 @@
+LIS3DSH Accelerometer
+    - PA5 - Serial Clock
+    - PA6 - Master in, Slave Out
+    - PA7 - Master out, Slave in
+    - PE3 - Chip select
+    - PE0 - Interrupt 1
+    - PE1 - Interrupt 2

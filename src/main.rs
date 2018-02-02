@@ -24,7 +24,9 @@ app! {
 
     resources: {
         static DIRECTION: Direction = Direction::North;
+        static GPIOA: stm32f40x::GPIOA;
         static GPIOD: stm32f40x::GPIOD;
+        static GPIOE: stm32f40x::GPIOE;
     },
 
     tasks: {
@@ -37,8 +39,14 @@ app! {
 
 // Initialize peripherals
 fn init(mut p:init::Peripherals, _r: init::Resources) -> init::LateResources {
-    // Enable gpio D
+    // Enable gpio A and E for LIS3DSH
+    p.device.RCC.ahb1enr.write(|w| unsafe { w.bits(0b1 << 0) })
+    p.device.RCC.ahb1enr.write(|w| unsafe { w.bits(0b1 << 4) })
+
+    // Enable gpio D for LED's
     p.device.RCC.ahb1enr.write(|w| unsafe { w.bits(0b1 << 3) });
+
+    
 
     // configure Discovery LEDs as push-pull output
     for pin in 12..16 {
@@ -63,7 +71,9 @@ fn init(mut p:init::Peripherals, _r: init::Resources) -> init::LateResources {
     p.core.SYST.enable_counter();
 
     init::LateResources {
+        GPIOA: p.device.GPIOA,
         GPIOD: p.device.GPIOD,
+        GPIOE: p.device.GPIOE,
     }
 }
 
