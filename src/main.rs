@@ -5,117 +5,74 @@
 extern crate cortex_m;
 #[macro_use]
 extern crate cortex_m_rt;
-extern crate cortex_m_semihosting;
 extern crate cortex_m_rtfm as rtfm;
-#[macro_use]
-extern crate stm32f40x;
+extern crate cortex_m_semihosting;
+extern crate stm32f40x_hal as hal;
 
-use rtfm::{app, Threshold, Resource};
+use hal::gpio::{Output, PushPull};
+use hal::prelude::*;
 
-pub enum Direction {
-    North,
-    West,
-    South,
-    East,
-}
+use rtfm::{app, Resource, Threshold};
 
 app! {
-    device: stm32f40x,
+    device: hal::stm32f40x,
 
     resources: {
-        static DIRECTION: Direction = Direction::North;
-        static GPIOA: stm32f40x::GPIOA;
-        static GPIOD: stm32f40x::GPIOD;
-        static GPIOE: stm32f40x::GPIOE;
+        static GPIOD12: hal::gpio::gpiod::PD12<Output<PushPull>>;
+        static FLAG: bool = false;
     },
 
     tasks: {
         SYS_TICK: {
             path: sys_tick,
-            resources: [DIRECTION, GPIOD],
+            resources: [GPIOD12, FLAG],
         }
     }
 }
 
 // Initialize peripherals
-fn init(mut p:init::Peripherals, _r: init::Resources) -> init::LateResources {
-    // Enable gpio A and E for LIS3DSH
-    p.device.RCC.ahb1enr.write(|w| unsafe { w.bits(0b1 << 0) })
-    p.device.RCC.ahb1enr.write(|w| unsafe { w.bits(0b1 << 4) })
+fn init(mut p: init::Peripherals, _r: init::Resources) -> init::LateResources {
+    let mut rcc = p.device.RCC.constrain();
+    let mut flash = p.device.FLASH.constrain();
 
-    // Enable gpio D for LED's
-    p.device.RCC.ahb1enr.write(|w| unsafe { w.bits(0b1 << 3) });
+    // Test adjusting clocks
+    let clocks = rcc.cfgr
+        .source(hal::rcc::ClockSource::HSI)
+        .apb1_prescale(2)
+        .enable_pll(96, 4, 4)
+        .build(&mut flash.acr);
 
-    
+    assert_eq!(clocks.hclk(), 48.mhz().into());
+    assert_eq!(clocks.pclk1(), 24.mhz().into());
+    assert_eq!(clocks.pclk2(), 48.mhz().into());
+    assert_eq!(clocks.sysclk(), 48.mhz().into());
 
-    // configure Discovery LEDs as push-pull output
-    for pin in 12..16 {
-        // General purpose output mode
-        let offset = pin * 2;
-        let mode = 0b01;
-        p.device.GPIOD
-            .moder
-            .modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << offset)) | (mode << offset)) });
+    let mut gpiod = p.device.GPIOD.split(&mut rcc.ahb1);
 
-        // Push pull output
-        p.device.GPIOD
-            .otyper
-            .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << pin)) });
-    }
+    let mut pin_d12 = gpiod.pd12.into_push_pull_output(&mut gpiod.moder, &mut gpiod.otyper);
 
-    // Configure system timer to generate one interrupt a second
+    pin_d12.set_high();
+
     p.core.SYST.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
-    p.core.SYST.set_reload(16_000_000);
+    p.core.SYST.set_reload(clocks.sysclk().0);
     p.core.SYST.clear_current();
     p.core.SYST.enable_interrupt();
     p.core.SYST.enable_counter();
 
     init::LateResources {
-        GPIOA: p.device.GPIOA,
-        GPIOD: p.device.GPIOD,
-        GPIOE: p.device.GPIOE,
+        GPIOD12: pin_d12,
     }
 }
 
+/// Should blink at 1 hertz?
 fn sys_tick(t: &mut Threshold, mut r: SYS_TICK::Resources) {
-    match *r.DIRECTION {
-        Direction::North => {
-            // Clear East pin and enable North pin
-            r.GPIOD.claim(t, |gpiod, t| {
-                gpiod.bsrr.write(|w| w.br15().reset() );
-                gpiod.bsrr.write(|w| w.bs12().set() );
-            });
-
-            *r.DIRECTION = Direction::West;
-        },
-        Direction::West => {
-            // Clear North pin and enable West pin
-            r.GPIOD.claim(t, |gpiod, t| {
-                gpiod.bsrr.write(|w| w.br12().reset() );
-                gpiod.bsrr.write(|w| w.bs13().set() );
-            });
-
-            *r.DIRECTION = Direction::South;
-        },
-        Direction::South => {
-            // Clear West pin and enable South pin
-            r.GPIOD.claim(t, |gpiod, t| {
-                gpiod.bsrr.write(|w| w.br13().reset() );
-                gpiod.bsrr.write(|w| w.bs14().set() );
-            });
-
-            *r.DIRECTION = Direction::East;
-        },
-        Direction::East => {
-            // Clear South pin and enable East pin
-            r.GPIOD.claim(t, |gpiod, t| {
-                gpiod.bsrr.write(|w| w.br14().reset() );
-                gpiod.bsrr.write(|w| w.bs15().set() );
-            });
-
-            *r.DIRECTION = Direction::North;
-        },
+    if *r.FLAG {
+        r.GPIOD12.set_low();
+    } else {
+        r.GPIOD12.set_high();
     }
+
+    *r.FLAG = !*r.FLAG;
 }
 
 fn idle() -> ! {
